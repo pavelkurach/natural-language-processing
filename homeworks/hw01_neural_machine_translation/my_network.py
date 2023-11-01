@@ -13,7 +13,7 @@ class EncoderBlock(nn.Module):
         assert embed_dim % num_heads == 0
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-        
+
         self.self_attn = nn.MultiheadAttention(self.embed_dim, self.num_heads)
         self.layer_norm1 = nn.LayerNorm(embed_dim)
         self.layer_norm2 = nn.LayerNorm(embed_dim)
@@ -25,13 +25,13 @@ class EncoderBlock(nn.Module):
         )
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x, src_mask):
         x = self.layer_norm1(x)
-        attn_out, _ = self.self_attn(x, x, x)
+        attn_out, _ = self.self_attn(x, x, x, key_padding_mask=src_mask)
         x = x + self.dropout(attn_out)
 
         x = self.layer_norm2(x)
-        x= self.feed_forward(x)
+        x = self.feed_forward(x)
         x = x + self.dropout(x)
 
         return x
@@ -43,7 +43,7 @@ class Encoder(nn.Module):
 
         self.input_dim = input_dim
         self.emb_dim = emb_dim
-        
+
         self.num_heads = num_heads
         self.n_layers = n_layers
 
@@ -64,11 +64,11 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, src):
+    def forward(self, src, src_mask):
         x = self.embedding(src)
         x = self.pos_enc(x)
         for l in self.layers:
-            x = l(x)
+            x = l(x, src_mask)
         return x
 
 
@@ -95,17 +95,25 @@ class DecoderBlock(nn.Module):
         self.layer_norm3 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, enc_output, mask):
+    def forward(self, x, enc_output, src_mask, trg_mask):
         x = self.layer_norm1(x)
         attn_out, _ = self.self_attn1(
-            x, x, x, attn_mask=mask,
+            x,
+            x,
+            x,
+            attn_mask=trg_mask,
         )
         x = x + self.dropout(attn_out)
-        
+
         x = self.layer_norm2(x)
-        attn_out, _ = self.self_attn2(x, enc_output, enc_output)
+        attn_out, _ = self.self_attn2(
+            x,
+            enc_output,
+            enc_output,
+            key_padding_mask=src_mask,
+        )
         x = x + self.dropout(attn_out)
-        
+
         x = self.layer_norm3(x)
         x = self.feed_forward(x)
         x = x + self.dropout(x)
@@ -115,7 +123,14 @@ class DecoderBlock(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(
-        self, output_dim, emb_dim, enc_dim, num_heads, n_layers, dropout, seq_len
+        self,
+        output_dim,
+        emb_dim,
+        enc_dim,
+        num_heads,
+        n_layers,
+        dropout,
+        seq_len,
     ):
         super().__init__()
 
@@ -145,21 +160,28 @@ class Decoder(nn.Module):
             ]
         )
 
-    def forward(self, x, enc_out, mask):
+    def forward(self, x, enc_out, src_mask, trg_mask):
         x = self.embedding(x)
         x = self.pos_enc(x)
         for l in self.layers:
-            x = l(x, enc_out, mask)
+            x = l(x, enc_out, src_mask, trg_mask)
         return self.softmax(self.out(x))
 
 
 class Seq2Seq(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: Decoder, device):
+    def __init__(
+        self,
+        encoder: Encoder,
+        decoder: Decoder,
+        device,
+        src_pad_idx,
+    ):
         super().__init__()
 
         self.encoder = encoder
         self.decoder = decoder
         self.device = device
+        self.src_pad_idx = src_pad_idx
 
     def forward(self, src, trg, teacher_forcing_ratio=0.5):
         # src = [src sent len, batch size]
@@ -176,7 +198,9 @@ class Seq2Seq(nn.Module):
         # first input to the decoder is the <sos> tokens
         sos = trg[0, :].unsqueeze(0)
         input = sos
-        enc_out = self.encoder(src)
+
+        src_mask = (src != self.src_pad_idx).transpose(0, 1).to(self.device)
+        enc_out = self.encoder(src, src_mask)
 
         for t in range(1, max_len):
             trg_mask = (
@@ -184,7 +208,7 @@ class Seq2Seq(nn.Module):
                 .expand(batch_size * self.decoder.num_heads, t, t)
                 .to(self.device)
             )
-            outputs = self.decoder(input, enc_out, trg_mask)
+            outputs = self.decoder(input, enc_out, src_mask, trg_mask)
             if t == max_len - 1:
                 outputs = torch.cat(
                     (nn.functional.one_hot(sos, trg_vocab_size), outputs), dim=0
