@@ -40,7 +40,7 @@ class Transformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.src_pad_idx = src_pad_idx
 
-    def forward(self, src, trg):
+    def one_step_forward(self, src, trg):
         trg_seq_length, _ = trg.shape
 
         embed_src = self.src_position_embedding(self.src_word_embedding(src))
@@ -62,6 +62,18 @@ class Transformer(nn.Module):
         )
         out = self.fc_out(out)
         return out
+
+    def forward(self, src, trg):
+        trg_len, _ = trg.shape
+        sos = trg[0, :].unsqueeze(0)
+        output = self.one_step_forward(src, sos).argmax(dim=-1)
+
+        for _ in range(1, trg_len - 1):
+            output = self.one_step_forward(src, torch.cat((sos, output), dim=0)).argmax(
+                dim=-1
+            )
+        output = self.one_step_forward(src, torch.cat((sos, output), dim=0))
+        return output
 
 
 # From pytorch doc
