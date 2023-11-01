@@ -1,16 +1,10 @@
+import math
+import random
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
-import torchtext
-from torchtext.datasets import TranslationDataset, Multi30k
-from torchtext.data import Field, BucketIterator
-
-import random
-import math
-import time
-
-import numpy as np
 
 
 class EncoderBlock(nn.Module):
@@ -19,35 +13,26 @@ class EncoderBlock(nn.Module):
         assert embed_dim % num_heads == 0
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-
-        self.query = nn.Linear(self.embed_dim, self.embed_dim)
-        self.key = nn.Linear(self.embed_dim, self.embed_dim)
-        self.value = nn.Linear(self.embed_dim, self.embed_dim)
+        
         self.self_attn = nn.MultiheadAttention(self.embed_dim, self.num_heads)
-
+        self.layer_norm1 = nn.LayerNorm(embed_dim)
+        self.layer_norm2 = nn.LayerNorm(embed_dim)
         self.feed_forward = nn.Sequential(
             nn.Linear(embed_dim, dim_feedforward),
             nn.Dropout(dropout),
             nn.ReLU(inplace=True),
             nn.Linear(dim_feedforward, embed_dim),
         )
-
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        attn_out, _ = self.self_attn(
-            self.query(x),
-            self.key(x),
-            self.value(x),
-        )
+        x = self.layer_norm1(x)
+        attn_out, _ = self.self_attn(x, x, x)
         x = x + self.dropout(attn_out)
-        x = self.norm1(x)
 
-        feed_forward_out = self.feed_forward(x)
-        x = x + self.dropout(feed_forward_out)
-        x = self.norm2(x)
+        x = self.layer_norm2(x)
+        x= self.feed_forward(x)
+        x = x + self.dropout(x)
 
         return x
 
@@ -58,6 +43,7 @@ class Encoder(nn.Module):
 
         self.input_dim = input_dim
         self.emb_dim = emb_dim
+        
         self.num_heads = num_heads
         self.n_layers = n_layers
 
@@ -94,14 +80,6 @@ class DecoderBlock(nn.Module):
         self.enc_dim = enc_dim
         self.num_heads = num_heads
 
-        self.query1 = nn.Linear(self.embed_dim, self.embed_dim)
-        self.key1 = nn.Linear(self.embed_dim, self.embed_dim)
-        self.value1 = nn.Linear(self.embed_dim, self.embed_dim)
-
-        self.query2 = nn.Linear(self.embed_dim, self.embed_dim)
-        self.key2 = nn.Linear(self.enc_dim, self.embed_dim)
-        self.value2 = nn.Linear(self.enc_dim, self.embed_dim)
-
         self.self_attn1 = nn.MultiheadAttention(self.embed_dim, self.num_heads)
         self.self_attn2 = nn.MultiheadAttention(self.embed_dim, self.num_heads)
 
@@ -112,32 +90,25 @@ class DecoderBlock(nn.Module):
             nn.Linear(dim_feedforward, embed_dim),
         )
 
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.norm3 = nn.LayerNorm(embed_dim)
+        self.layer_norm1 = nn.LayerNorm(embed_dim)
+        self.layer_norm2 = nn.LayerNorm(embed_dim)
+        self.layer_norm3 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, enc_output, mask):
+        x = self.layer_norm1(x)
         attn_out, _ = self.self_attn1(
-            self.query1(x),
-            self.key1(x),
-            self.value1(x),
-            attn_mask=mask,
+            x, x, x, attn_mask=mask,
         )
         x = x + self.dropout(attn_out)
-        x = self.norm1(x)
-
-        attn_out, _ = self.self_attn2(
-            self.query2(x),
-            self.key2(enc_output),
-            self.value2(enc_output),
-        )
+        
+        x = self.layer_norm2(x)
+        attn_out, _ = self.self_attn2(x, enc_output, enc_output)
         x = x + self.dropout(attn_out)
-        x = self.norm2(x)
-
-        feed_forward_out = self.feed_forward(x)
-        x = x + self.dropout(feed_forward_out)
-        x = self.norm3(x)
+        
+        x = self.layer_norm3(x)
+        x = self.feed_forward(x)
+        x = x + self.dropout(x)
 
         return x
 
@@ -245,10 +216,10 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[: x.size(0)]
         return self.dropout(x)
-    
-#from https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html
-class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
 
+
+# from https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html
+class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup, max_iters):
         self.warmup = warmup
         self.max_num_iters = max_iters
