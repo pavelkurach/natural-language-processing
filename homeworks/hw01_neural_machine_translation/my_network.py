@@ -44,7 +44,7 @@ class Transformer(nn.Module):
         trg_seq_length, _ = trg.shape
 
         embed_src = self.src_position_embedding(self.src_word_embedding(src))
-        embed_trg = self.trg_position_embedding(self.src_word_embedding(trg))
+        embed_trg = self.trg_position_embedding(self.trg_word_embedding(trg))
 
         src_padding_mask = (
             (src.transpose(0, 1) == self.src_pad_idx).float().to(self.device)
