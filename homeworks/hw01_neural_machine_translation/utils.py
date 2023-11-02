@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 def flatten(l):
@@ -30,8 +31,7 @@ def generate_translation(src, trg, model, TRG_vocab):
     output = model(src, sos).argmax(dim=-1)
 
     for _ in range(1, trg_len):
-        output = model(src, torch.cat((sos, output), dim=0), 0).argmax(dim=-1)
-    assert output.shape == trg.shape
+        output = F.softmax(model(src, torch.cat((sos, output), dim=0))).argmax(dim=-1)
 
     output = output.cpu().numpy()
 

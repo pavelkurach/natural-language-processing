@@ -40,7 +40,7 @@ class Transformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.src_pad_idx = src_pad_idx
 
-    def one_step_forward(self, src, trg):
+    def forward(self, src, trg):
         trg_seq_length, _ = trg.shape
 
         embed_src = self.src_position_embedding(self.src_word_embedding(src))
@@ -62,23 +62,6 @@ class Transformer(nn.Module):
         )
         out = self.fc_out(out)
         return out
-
-    def forward(self, src, trg, teacher_forcing_ratio=0.5):
-        trg_len, _ = trg.shape
-        sos = trg[0, :].unsqueeze(0)
-        output = self.one_step_forward(src, sos).argmax(dim=-1)
-
-        for step in range(1, trg_len - 1):
-            teacher_force = random.random() < teacher_forcing_ratio
-            if teacher_force:
-                output = trg[1 : step + 2]
-            else:
-                output = self.one_step_forward(
-                    src, torch.cat((sos, output), dim=0)
-                ).argmax(dim=-1)
-
-        output = self.one_step_forward(src, torch.cat((sos, output), dim=0))
-        return output
 
 
 # From pytorch doc
